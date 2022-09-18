@@ -8,7 +8,7 @@ Using an ESP32 with Arduino.
 Sun2000 GTIL2 gets grid import/export power from a SDM630 via RS485->MQTT. Internal limiter gets emulated via single GPIO pin connected to single pin of limiter (leave the other floating). Ground gets connected to pin 5 of remote connector. Actual power output is controlled by the inverter itself.
 
 Phase zero crossing detector is required to sync power emulation. In case of wrong sign, change half-wave by 'void Sun2000softLimiterEmu::setPhase()' or swap AC pins.
-![Zero crossing detector](http://url/to/zeroCrossing.png)
+![Zero crossing detector](https://raw.githubusercontent.com/3s1d/ACACbattery/master/zeroCrossing.png)
 
 Parameters:
 ```
