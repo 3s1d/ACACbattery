@@ -5,15 +5,16 @@
 #include <ArduinoOTA.h>
 #include <ArduinoJson.h>
 
+#include "bgTask.h"
 #include "sun2000softLimiterEmu.h"
 #include "auth.h"
 
-/* ESP32 WROOM */
+/* ESP32 DEV KIT */
 
 /*
    MQTT
 */
-
+#define MQTT_SUFFIX           "/bat/"
 const char *name = "Battery";
 const char *mqtt_broker = "apollo.local";
 const char *sdmPwr_topic = "/sdmGw/power_quick";
@@ -21,8 +22,13 @@ const char *sdmPwr_topic = "/sdmGw/power_quick";
 PubSubClient ps_client;
 WiFiClient espClient;
 
+/* limiter emulation */
 float lastFwdPwr_w = 0.0f;
 const float fwdPwrLowPath_factor = 0.5f;    //limits: 1.0 -> immedieatly full power forward. 0.0 -> no power forward
+
+/* sun2000 info */
+Background::sun2k_info_t s2kInfo = {};
+uint32_t nextS2kFwd_ms = 5000; 
 
 void WiFiEvent(WiFiEvent_t event)
 {
@@ -44,7 +50,7 @@ void WiFiEvent(WiFiEvent_t event)
       Serial.println(WiFi.softAPIPv6());
       break;
     case SYSTEM_EVENT_STA_GOT_IP:
-      Serial.println("STA Connected");
+      //Serial.println("STA Connected");
       break;
     case SYSTEM_EVENT_STA_DISCONNECTED:
       Serial.println("STA Disconnected");
@@ -128,20 +134,22 @@ void ps_callback(char* topic, byte* payload, unsigned int length)
 void setup()
 {
   Serial.begin(115200);
-  
+  Serial.println("--== Battery ==--");
+
+  /* limiter */
   softLimiterEmu.setup();
 
   WiFi.disconnect(true);
   WiFi.onEvent(WiFiEvent);
   WiFi.begin(WIFI_SSID, WIFI_PW);
 
+  Serial.print("Wifi ");
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
 
-  Serial.println(" connected.");
-  Serial.println("IP address:");
+  Serial.print(" connected. IP address: ");
   Serial.println(WiFi.localIP());
 
   WiFi.setHostname(name);
@@ -149,6 +157,9 @@ void setup()
   ps_client.setClient(espClient);
   ps_client.setServer(mqtt_broker, 1883);
   ps_client.setCallback(ps_callback);
+
+  /* sun 2000 rs232 + temp sensor */
+  bg.start();
 
   /* OTA */
   ArduinoOTA
@@ -184,12 +195,10 @@ void setup()
 
 void loop()
 {
-
   /* MQTT */
   if (ps_client.connected() == false)
   {
-    Serial.print(millis());
-    Serial.print(": Connecting to MQTT ");
+    Serial.print("Connecting to MQTT ");
     if (reconnect() == false)
     {
       Serial.println("failed.");
@@ -201,5 +210,32 @@ void loop()
   }
 
   ps_client.loop();
+
+  /* foward statistics */
+  if(nextS2kFwd_ms < millis())
+  {
+    Background::sun2k_info_t nextInfo = bg.getS2kInfo();
+    if(s2kInfo.tstamp != nextInfo.tstamp)
+    {
+      s2kInfo = nextInfo;
+      Serial.print("S2kIno: bat=");
+      Serial.print(s2kInfo.vbat_v);
+      Serial.print("V, avgPwr=");
+      Serial.print(s2kInfo.avgPwr_w);
+      Serial.print("W, enToday=");
+      Serial.print(s2kInfo.energyToday_kwh);
+      Serial.println("kWh");
+      
+      ps_client.publish( MQTT_SUFFIX "bat_v", String(s2kInfo.vbat_v, 2).c_str());
+      ps_client.publish( MQTT_SUFFIX "today_kwh", String(s2kInfo.energyToday_kwh, 2).c_str());
+      ps_client.publish( MQTT_SUFFIX "avgPwr_w", String(s2kInfo.avgPwr_w, 2).c_str());
+    }    
+    else
+    {
+      Serial.println("WRN: sun2k info no tstamp update");
+    }
+    nextS2kFwd_ms = millis() + 5000;
+
+  }
 
 }

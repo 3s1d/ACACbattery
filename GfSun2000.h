@@ -1,13 +1,15 @@
 #ifndef GfSun2000_h
 #define GfSun2000_h
+
 #include <Arduino.h>
 #include <map>
-#include "eModbus/ModbusClientRTU.h"
 
-#define MODBUS_REGISTRY_FROM  0
-#define MODBUS_REGISTRY_TO    125
-#define MODBUS_TIMEOUT     2000
-#define MODBUS_INDEX_OFFSET  3     // id server and function ID
+#include <ModbusClientRTU.h>
+
+#define MODBUS_REGISTRY_FROM      0
+#define MODBUS_REGISTRY_TO        125
+#define MODBUS_TIMEOUT            2000
+#define MODBUS_INDEX_OFFSET       3     // id server and function ID
 
 
 #define REGISTRY_DEVICE_ID               3     // 10 chars; registers 3,4,5,6,7

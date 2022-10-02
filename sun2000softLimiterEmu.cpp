@@ -107,3 +107,11 @@ void Sun2000softLimiterEmu::set(float watt)
     nextPulseWidth_us = 0;
   }
 }
+
+void Sun2000softLimiterEmu::off(void)
+{
+    portENTER_CRITICAL(&mux);
+    nextPulseWidth_us = 0;
+    nextSignShift_us = !!nonInvert;
+    portEXIT_CRITICAL(&mux);
+}

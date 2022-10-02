@@ -27,6 +27,8 @@ Parameters:
 ```
 Those values may be subject to change for your setup. Please note the export margin in Watts. The inverter will display 20 Watts less than the provided value.
 
+Additionaly Sun2000's RS232 is used to collect some more information. This is based upon [GFSunInverter](https://github.com/BlackSmith/GFSunInverter) by BlackSmith.
+
 ## Charging
  
 todo

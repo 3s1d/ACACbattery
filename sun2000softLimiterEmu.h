@@ -3,8 +3,8 @@
 
 #include <Arduino.h>
 
-#define SUN2000_LIMITER      18
-#define SUN2000_ACLINE       12
+#define SUN2000_LIMITER      13
+#define SUN2000_ACLINE       21
 
 class Sun2000softLimiterEmu
 {
@@ -54,7 +54,7 @@ public:
   void setPhase(bool secondSpikePos) { nonInvert = secondSpikePos; }
   
   void set(float watt);
-
+  void off(void);
   
 };
 
