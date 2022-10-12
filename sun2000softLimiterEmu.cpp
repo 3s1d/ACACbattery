@@ -35,6 +35,7 @@ void IRAM_ATTR Sun2000softLimiterEmu::onAc(void)
   else
   {
     state = 0;      //state correction...
+    timerAlarmDisable(timer);
     digitalWrite(limiterPin, LOW);
   }
  
@@ -59,6 +60,7 @@ void IRAM_ATTR Sun2000softLimiterEmu::onTimer(void)
       state = 0;
       timerAlarmDisable(timer);
       attachInterrupt(digitalPinToInterrupt(aclinePin), onAcWrapper, RISING);
+      cycleIndicator++;
   }
 }
 
@@ -78,6 +80,10 @@ void Sun2000softLimiterEmu::setup(int32_t timerNum)
 
 void Sun2000softLimiterEmu::set(float watt)
 {
+  //Serial.print("Sun2k: ");
+  //Serial.print(watt);
+  //Serial.println("W");
+
   watt -= exportErrorMargin_watt;
   if(watt > limit_watt)
     watt = limit_watt;

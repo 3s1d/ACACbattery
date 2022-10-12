@@ -20,7 +20,7 @@ public:
   const int16_t offset = 15;              //unit: us 
   
   const float limit_watt = 1700.0f;       //GTIL2 continuous limit is 1800W, not going to max here in order not to damage the hardware
-  const float exportErrorMargin_watt = 20.0f;
+  const float exportErrorMargin_watt = 0.0f;
 
   const int32_t limiterPin;
   const int32_t aclinePin;
@@ -45,6 +45,9 @@ private:
   friend void IRAM_ATTR onTimerWrapper(void);
 
 public:
+  //tbr
+  uint32_t cycleIndicator = 0;
+
   Sun2000softLimiterEmu(int32_t limiterPin, int32_t aclinePin) : limiterPin(limiterPin), aclinePin(aclinePin) { }
 
   void setup(int32_t timerNum = 0);

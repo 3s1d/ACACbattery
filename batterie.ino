@@ -6,8 +6,10 @@
 #include <ArduinoJson.h>
 
 #include "bgTask.h"
-#include "sun2000softLimiterEmu.h"
+#include "charger.h"
+#include "discharger.h"
 #include "auth.h"
+#include "Sun2000softLimiterEmu.h"  //TBR
 
 /* ESP32 DEV KIT */
 
@@ -22,13 +24,29 @@ const char *sdmPwr_topic = "/sdmGw/power_quick";
 PubSubClient ps_client;
 WiFiClient espClient;
 
-/* limiter emulation */
-float lastFwdPwr_w = 0.0f;
-const float fwdPwrLowPath_factor = 0.5f;    //limits: 1.0 -> immedieatly full power forward. 0.0 -> no power forward
+/* power informartion */
+const int32_t pwrFlowDelay = 3;
+int32_t pwrFlow = 0;
+float currentPwr = 0.0f;
+uint32_t lastPwr_ms = 0;
+
+uint32_t nextDataSync_ms = 5000; 
 
 /* sun2000 info */
 Background::sun2k_info_t s2kInfo = {};
-uint32_t nextS2kFwd_ms = 5000; 
+const float vbat_min = 60.0f;
+const float vbat_dchgActivate = 62.5f;
+
+/* temperature */
+Background::temp_info_t tempInfo;
+#define FAN_PIN   15
+#define HEATER_PIN  22
+const float fanStart_c = 27.0f;
+const float fanStop_c = 23.0f;
+const float heaterStart_c = 5.0f;
+const float heaterStop_c = 9.0f;
+const float shutdown_c = 37.0f;
+const float minCharge_c = 4.0f;
 
 void WiFiEvent(WiFiEvent_t event)
 {
@@ -115,20 +133,101 @@ void ps_callback(char* topic, byte* payload, unsigned int length)
   }
 
   /* determine forward power */
-  //note: smooth true power consuption slightly for importing power in order not to overshoot here
-  float currentPwr = (doc.containsKey("L1") and doc.containsKey("L2") and doc.containsKey("L3")) ? (((float)doc["L1"]) + ((float)doc["L2"]) + ((float)doc["L3"])) : 0.0f;
-  if(lastFwdPwr_w < currentPwr and currentPwr > 0.0f)
-    lastFwdPwr_w = (1.0f-fwdPwrLowPath_factor)*lastFwdPwr_w + fwdPwrLowPath_factor*currentPwr;
-  else
-    lastFwdPwr_w = currentPwr;
-  softLimiterEmu.set(lastFwdPwr_w);
+  currentPwr = (doc.containsKey("L1") and doc.containsKey("L2") and doc.containsKey("L3")) ? (((float)doc["L1"]) + ((float)doc["L2"]) + ((float)doc["L3"])) : 0.0f;
+  lastPwr_ms = millis();
+#if 0
+  Serial.print("pwrFlow:");
+  Serial.print(pwrFlow);
+  Serial.print(" chg:");
+  Serial.print(charger.active);
+  Serial.print(" disChg:");
+  Serial.println(discharger.active);
+#endif
 
-  //todo switch between charging and discahrging
+  /* temperature check */
+  if(lastPwr_ms > tempInfo.tstamp+10000 or tempInfo.temp == DEVICE_DISCONNECTED_C)
+  {
+    Serial.println("No tempInfo\n");
+    discharger.off();
+    charger.off();
+    pwrFlow = 0;
+    return;
+  }
+  if(tempInfo.temp > shutdown_c)
+  {
+    Serial.println("HOT!!\n");
+    discharger.off();
+    charger.off();
+    pwrFlow = 0;
+    return;
+  }
 
-  //tbr
-  Serial.print(currentPwr);
-  Serial.print("->");
-  Serial.println(lastFwdPwr_w);
+  /* prevent inverter powering charger and vise versa */
+  if(charger.active and discharger.active)
+  {
+    Serial.println("WOW!!!! Discharger and Charger both active!!!");
+    if(currentPwr > 0.0f)
+      charger.off();
+    else
+      discharger.off();
+    pwrFlow = 0;
+    return;
+  }
+
+  /* start up decice */
+  if(charger.active == false and discharger.active == false)
+  {
+    if(currentPwr > 0.0f and pwrFlow < pwrFlowDelay)
+      pwrFlow++;
+    else if(currentPwr < 0.0f and pwrFlow > -pwrFlowDelay)
+      pwrFlow--;
+  }
+
+  /* prevent inverter powering charger and vise versa */
+  //note: in case of active device, deactivate first and try ned round
+  if(charger.active or pwrFlow <= -pwrFlowDelay)
+  {
+    /* no charging below minCharge_c */
+    if(tempInfo.temp < minCharge_c)
+    {
+      Serial.print("Too cold\n");
+      charger.off();
+      pwrFlow = 0;
+    }
+    else
+    {      
+      charger.setMaxPower_w(currentPwr);
+      if(charger.active == false)
+        pwrFlow = 0;
+    }
+  }
+  else if(discharger.active or pwrFlow >= pwrFlowDelay)
+  {
+    /* ensure not to under voltage the battery */
+    if(s2kInfo.vbat_v < vbat_min or s2kInfo.tstamp+10000 < lastPwr_ms)
+    {
+      Serial.print("Battery empty\n");
+      discharger.off();
+      pwrFlow = 0;
+    }    
+    else if(discharger.active == false and s2kInfo.vbat_v < vbat_dchgActivate)
+    {
+      Serial.print("Battery too low\n");
+      pwrFlow = 0;
+    }
+    else
+    {
+      discharger.setMaxPower_w(currentPwr);
+      if(discharger.active == false)
+        pwrFlow = 0;
+    }
+  }
+
+  /* reply state */
+  char json[256];
+  snprintf(json, sizeof(json), "{\"chg\": %.f, \"dchg\": %.f, \"dchgAvg\": %.f, \"state\": %d, \"cI\": %u, \"up\": %u}", 
+    charger.getMaxPower_w(), discharger.getMaxPower_w(), discharger.active ? s2kInfo.avgPwr_w : 0.0f, pwrFlow, softLimiterEmu.cycleIndicator, millis());
+  ps_client.publish( MQTT_SUFFIX "stat", json);
 }
 
 void setup()
@@ -136,17 +235,32 @@ void setup()
   Serial.begin(115200);
   Serial.println("--== Battery ==--");
 
-  /* limiter */
-  softLimiterEmu.setup();
+  /* FAN */
+  //note: unknown state during boot -> start cooling
+  pinMode(FAN_PIN, OUTPUT);
+  digitalWrite(FAN_PIN, HIGH);
+
+  /* HEATER */
+  pinMode(HEATER_PIN, OUTPUT);
+  digitalWrite(HEATER_PIN, LOW);
+
+  /* init external hardware */
+  discharger.setup();
+  charger.setup();
 
   WiFi.disconnect(true);
   WiFi.onEvent(WiFiEvent);
   WiFi.begin(WIFI_SSID, WIFI_PW);
 
   Serial.print("Wifi ");
+  uint32_t i=0;
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+
+    /* 30sec timeout */
+    if (++i > 60)
+      ESP.restart();
   }
 
   Serial.print(" connected. IP address: ");
@@ -212,8 +326,11 @@ void loop()
   ps_client.loop();
 
   /* foward statistics */
-  if(nextS2kFwd_ms < millis())
+  if(nextDataSync_ms < millis())
   {
+
+    /* additional sun2000 info */
+    //note: uncritical
     Background::sun2k_info_t nextInfo = bg.getS2kInfo();
     if(s2kInfo.tstamp != nextInfo.tstamp)
     {
@@ -226,16 +343,55 @@ void loop()
       Serial.print(s2kInfo.energyToday_kwh);
       Serial.println("kWh");
       
-      ps_client.publish( MQTT_SUFFIX "bat_v", String(s2kInfo.vbat_v, 2).c_str());
-      ps_client.publish( MQTT_SUFFIX "today_kwh", String(s2kInfo.energyToday_kwh, 2).c_str());
-      ps_client.publish( MQTT_SUFFIX "avgPwr_w", String(s2kInfo.avgPwr_w, 2).c_str());
+      ps_client.publish( MQTT_SUFFIX "bat_v", String(s2kInfo.vbat_v, 1).c_str());
+      ps_client.publish( MQTT_SUFFIX "today_kwh", String(s2kInfo.energyToday_kwh, 1).c_str());
+      ps_client.publish( MQTT_SUFFIX "avgPwr_w", String(s2kInfo.avgPwr_w, 1).c_str());
     }    
     else
     {
       Serial.println("WRN: sun2k info no tstamp update");
     }
-    nextS2kFwd_ms = millis() + 5000;
 
+    /* share max allowed charging power */
+    ps_client.publish( MQTT_SUFFIX "chargerMax_w", String(-charger.getMaxPower_w(), 0).c_str());
+
+    /* temperature information */
+    //note: critical
+    Background::temp_info_t nextTemp = bg.getTempInfo();
+    if(tempInfo.tstamp != nextTemp.tstamp)
+    {
+      tempInfo = nextTemp;
+      Serial.print("Temp: ");
+      Serial.print(tempInfo.temp);
+      Serial.println("C");    
+      ps_client.publish( MQTT_SUFFIX "temp_c", String(tempInfo.temp, 1).c_str());
+      ps_client.publish( MQTT_SUFFIX "fan", digitalRead(FAN_PIN) ? "on" : "off");
+    }
+
+    /* temperture control */
+    if(tempInfo.temp > fanStart_c or tempInfo.temp == DEVICE_DISCONNECTED_C)
+      digitalWrite(FAN_PIN, HIGH);
+    else if(tempInfo.temp < fanStop_c)
+      digitalWrite(FAN_PIN, LOW);
+    if(tempInfo.temp < heaterStart_c and tempInfo.temp != DEVICE_DISCONNECTED_C and lastPwr_ms < millis()+10000 and currentPwr < -50.0f)
+      digitalWrite(HEATER_PIN, HIGH);
+    else if(tempInfo.temp > heaterStop_c or tempInfo.temp == DEVICE_DISCONNECTED_C or currentPwr > 0.0f or lastPwr_ms > millis()+10000)
+      digitalWrite(HEATER_PIN, LOW);
+
+    nextDataSync_ms = millis() + 7500;
   }
 
+  /* ensure regular updates */
+  if(millis() > lastPwr_ms+5000)
+  {
+    Serial.println("No SDM data!");
+    discharger.off();
+    charger.off();
+    pwrFlow = 0;
+
+    delay(500);
+  }
+
+  ArduinoOTA.handle();
+  delay(100);
 }

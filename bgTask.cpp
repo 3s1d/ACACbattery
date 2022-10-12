@@ -1,3 +1,4 @@
+#include "OneWire.h"
 #include <Arduino.h>
 
 #include "bgTask.h"
@@ -6,7 +7,7 @@ Background bg;
 
 void errorHandler(int errorId, char* errorMessage) 
 {
-  Serial.printf("Error response: %02X - %s\n", errorId, errorMessage);
+  Serial.printf("Sun2k err: %02X - %s\n", errorId, errorMessage);
 }
 
 extern "C" void dataHandler(GfSun2000Data data) 
@@ -38,21 +39,57 @@ extern "C" void dataHandler(GfSun2000Data data)
 
 void bg_task(void *arg)
 {
+  bg.task();
+
+  vTaskDelete(nullptr);
+}
+
+void Background::task(void)
+{
   /* init */
-  GfSun2000 GF = GfSun2000(); 
+  GF = GfSun2000(); 
   GF.setup(Serial2);  
   GF.setDataHandler(dataHandler);
   GF.setErrorHandler(errorHandler);
 
+  oneWire = OneWire(oneWirePin);
+  tempsens = DallasTemperature(&oneWire);
+  tempsens.begin();
+
   /* loop */
   while(1)
   {
-    GF.readData();
-    //sleep(3);
-    delay(1000);
-  }
+    /* Send the command to get temperatures */
+    tempsens.requestTemperatures();
 
-  vTaskDelete(nullptr);
+    /* get sun2000 data */
+    GF.readData();
+
+    /* get temperature */
+    //note: erros might happen as we are bitbanging it
+    float tempC = tempsens.getTempCByIndex(0);
+    portENTER_CRITICAL(&bg.mux);
+    if(tempC == DEVICE_DISCONNECTED_C)
+    {
+      /* yield for 3 in a row before reporting a negative result */
+      if(++tempErrorDelay > 3)
+        tempInfo.temp = tempC;
+    }
+    else
+    {
+      /* everything correct */
+      tempInfo.temp = tempC;
+      tempErrorDelay = 0;
+    }
+    tempInfo.tstamp = millis();
+    portEXIT_CRITICAL(&bg.mux);
+
+    if(tempInfo.temp == DEVICE_DISCONNECTED_C) 
+      Serial.println("Temp sens error.");
+
+    delay(2000);
+  }
+  
 }
 
 void Background::start(void) 
@@ -71,6 +108,15 @@ Background::sun2k_info_t Background::getS2kInfo(void)
 {
   portENTER_CRITICAL(&mux);
   sun2k_info_t ret = s2kInfo;
+  portEXIT_CRITICAL(&mux);
+
+  return ret;
+}
+
+Background::temp_info_t Background::getTempInfo(void)
+{
+  portENTER_CRITICAL(&mux);
+  temp_info_t ret = tempInfo;
   portEXIT_CRITICAL(&mux);
 
   return ret;
