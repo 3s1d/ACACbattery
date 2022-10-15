@@ -82,8 +82,23 @@ void Charger::setMaxPower_w(float watt)
   state = nextState;
 
   /* control final output */
-  _active = state > 0.0f or watt <= 0.0f;
+  bool nextActive = state > 0.0f or watt <= 0.0f;
+  if(nextActive == true)
+  {
+    _active = nextActive;
+    if(state > 10.0f)
+      offDelay = 2;
+  }
+  else if(offDelay > 0)
+  {
+    offDelay--;
+  }
+  else 
+  {
+    _active = nextActive;
+  }
   digitalWrite(powerPin, active ? HIGH : LOW);
+
 }
 
 void Charger::off(void)

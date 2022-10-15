@@ -24,6 +24,7 @@ public:
 private:
   float state = 0.0f;
   bool _active = false;
+int16_t offDelay = 0;
 
   uint32_t suspendCtlforCycles = 0;       //note: siliently assuming 1Hz call rate. Charger takes 4sec to warm up
 
