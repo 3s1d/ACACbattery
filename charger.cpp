@@ -1,3 +1,4 @@
+#include "HardwareSerial.h"
 #include "esp32-hal.h"
 #include "esp32-hal-gpio.h"
 #include "charger.h"
@@ -53,6 +54,7 @@ void Charger::setMaxPower_w(float watt)
       tlc5615(round(state));
       digitalWrite(powerPin, HIGH);
       _active = true;
+      offDelay = 4;
       suspendCtlforCycles = 5;      //charger warm up
     }      
     return;
@@ -70,10 +72,23 @@ void Charger::setMaxPower_w(float watt)
   if(watt > powerMarginW and watt <= 0.0f)
     return;
 
-  /* adjust power */
   const float dPwr = watt - powerMarginW/2.0f;          //targer is powerMarginW/2.0f (import)
-  const float dSteps = round(dPwr / wattPerStep * ki);
-  float nextState = state+dSteps;
+  float nextState; 
+
+  /* adjust power */
+  if(digitalRead(nFullyCharged) == LOW)
+  {
+    /* fully charged indicator on -> will not consume any power -> control P only as I will max out pwr consumption */
+    const float absSteps = round(dPwr / wattPerStep * kp);
+    nextState = absSteps;
+  }
+  else
+  {
+    /* pure I control */
+    const float dSteps = round(dPwr / wattPerStep * ki);
+    nextState = state+dSteps;
+  }
+
   if(nextState > maxDAC)
     nextState = maxDAC;
   else if(nextState < 0.0f)
@@ -86,11 +101,12 @@ void Charger::setMaxPower_w(float watt)
   if(nextActive == true)
   {
     _active = nextActive;
-    if(state > 10.0f)
-      offDelay = 2;
+    offDelay = 4;
   }
   else if(offDelay > 0)
   {
+    Serial.print("Chg off delay: ");
+    Serial.println(offDelay);
     offDelay--;
   }
   else 
@@ -103,6 +119,8 @@ void Charger::setMaxPower_w(float watt)
 
 void Charger::off(void)
 {
+  Serial.println("CHG OFFFFFF\n");
+  
   /* reduce power */ 
   state = 0.0f;
   tlc5615(round(state));
@@ -119,6 +137,7 @@ void Charger::setup(void)
 {
   pinMode(powerPin, OUTPUT);
   digitalWrite(powerPin, LOW);
+  pinMode(nFullyCharged, INPUT_PULLUP);
   _active = 0;
 
   pinMode(cs, OUTPUT);
@@ -131,6 +150,7 @@ void Charger::setup(void)
   delay(50);
 
   state = 0.0f;
+  tlc5615(round(state));
   tlc5615(round(state));
 }
 

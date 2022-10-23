@@ -60,7 +60,6 @@ void IRAM_ATTR Sun2000softLimiterEmu::onTimer(void)
       state = 0;
       timerAlarmDisable(timer);
       attachInterrupt(digitalPinToInterrupt(aclinePin), onAcWrapper, RISING);
-      cycleIndicator++;
   }
 }
 

@@ -15,6 +15,7 @@ private:
 
   float state = 0.0f;
   bool _active = false;
+  int16_t offDelay = 0;
 
 public:
   const bool &active;

@@ -45,9 +45,6 @@ private:
   friend void IRAM_ATTR onTimerWrapper(void);
 
 public:
-  //tbr
-  uint32_t cycleIndicator = 0;
-
   Sun2000softLimiterEmu(int32_t limiterPin, int32_t aclinePin) : limiterPin(limiterPin), aclinePin(aclinePin) { }
 
   void setup(int32_t timerNum = 0);

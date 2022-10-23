@@ -13,6 +13,7 @@ public:
   const uint16_t maxDAC = 860;   //vref is fead via voltage halfer (resistor) from charger, effectivly canceling out 2x gain of tlc5615
 
   const uint32_t powerPin = 4;
+  const uint32_t nFullyCharged = 23;
 
   const float minChrgPwr_w = -66.0f;
   const float maxChrgPwr_w = -1560.0f;
@@ -20,11 +21,12 @@ public:
   const float powerMarginW = 2.0f*minChrgPwr_w;
 
   const float ki = 0.3f;
+  const float kp = 0.7f;
 
 private:
   float state = 0.0f;
   bool _active = false;
-int16_t offDelay = 0;
+  int16_t offDelay = 0;
 
   uint32_t suspendCtlforCycles = 0;       //note: siliently assuming 1Hz call rate. Charger takes 4sec to warm up
 

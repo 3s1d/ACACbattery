@@ -33,9 +33,10 @@ uint32_t lastPwr_ms = 0;
 uint32_t nextDataSync_ms = 5000; 
 
 /* sun2000 info */
+//note: voltages seems to be read 0.4V too high by my unit (reference is JK bms)
 Background::sun2k_info_t s2kInfo = {};
-const float vbat_min = 60.0f;
-const float vbat_dchgActivate = 62.5f;
+const float vbat_min = 60.8f;
+const float vbat_dchgActivate = 62.7f;
 
 /* temperature */
 Background::temp_info_t tempInfo;
@@ -43,8 +44,8 @@ Background::temp_info_t tempInfo;
 #define HEATER_PIN  22
 const float fanStart_c = 27.0f;
 const float fanStop_c = 23.0f;
-const float heaterStart_c = 5.0f;
-const float heaterStop_c = 9.0f;
+const float heaterStart_c = 6.0f;
+const float heaterStop_c = 10.0f;
 const float shutdown_c = 37.0f;
 const float minCharge_c = 4.0f;
 
@@ -222,12 +223,6 @@ void ps_callback(char* topic, byte* payload, unsigned int length)
         pwrFlow = 0;
     }
   }
-
-  /* reply state */
-  char json[256];
-  snprintf(json, sizeof(json), "{\"chg\": %.f, \"dchg\": %.f, \"dchgAvg\": %.f, \"state\": %d, \"cI\": %u, \"up\": %u}", 
-    charger.getMaxPower_w(), discharger.getMaxPower_w(), discharger.active ? s2kInfo.avgPwr_w : 0.0f, pwrFlow, softLimiterEmu.cycleIndicator, millis());
-  ps_client.publish( MQTT_SUFFIX "stat", json);
 }
 
 void setup()
@@ -355,6 +350,12 @@ void loop()
     /* share max allowed charging power */
     ps_client.publish( MQTT_SUFFIX "chargerMax_w", String(-charger.getMaxPower_w(), 0).c_str());
 
+    /* reply state */
+    char json[256];
+    snprintf(json, sizeof(json), "{\"pwr\": %.f, \"chg\": %.f, \"dchg\": %.f, \"dchgAvg\": %.f, \"state\": %d, \"up\": %u, \"fChgInd\": %u}", 
+      currentPwr, charger.getMaxPower_w(), discharger.getMaxPower_w(), discharger.active ? s2kInfo.avgPwr_w : 0.0f, pwrFlow, millis(), !digitalRead(charger.nFullyCharged));
+    ps_client.publish( MQTT_SUFFIX "stat", json);
+
     /* temperature information */
     //note: critical
     Background::temp_info_t nextTemp = bg.getTempInfo();
@@ -389,9 +390,13 @@ void loop()
     charger.off();
     pwrFlow = 0;
 
+    char json[128];
+    snprintf(json, sizeof(json), "{\"wrnNoSdm\": %ld}", (int64_t)(millis() - lastPwr_ms));
+    ps_client.publish( MQTT_SUFFIX "stat", json);
+
     delay(500);
   }
 
   ArduinoOTA.handle();
-  delay(100);
+  delay(10);
 }
