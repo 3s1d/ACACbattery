@@ -39,7 +39,7 @@ void Charger::tlc5615(uint16_t dac)
 }
 
 //note: working w/ neg/export values here
-void Charger::setMaxPower_w(float watt)
+void Charger::setMaxPower_w(float watt, bool boostable)
 {
   Serial.print("Charger max: ");
   Serial.print(watt);
@@ -72,6 +72,19 @@ void Charger::setMaxPower_w(float watt)
   if(watt > powerMarginW and watt <= 0.0f)
     return;
 
+  /* booster */
+  if(boostable == false and digitalRead(boostPin) == HIGH)
+  {
+    digitalWrite(boostPin, LOW);
+    Serial.println("Boost off (ext)\n");
+  }
+  else if(boostable == true and watt < boostPwr_w and state >= round(maxDAC) and digitalRead(boostPin) == LOW)
+  {
+    digitalWrite(boostPin, HIGH);
+    Serial.println("Boost on!\n");
+    return;
+  }
+
   const float dPwr = watt - powerMarginW/2.0f;          //targer is powerMarginW/2.0f (import)
   float nextState; 
 
@@ -96,6 +109,15 @@ void Charger::setMaxPower_w(float watt)
   tlc5615(round(nextState));
   state = nextState;
 
+  if(digitalRead(boostPin) == HIGH and state <= ((float)maxDAC)*0.5f)
+  {
+    digitalWrite(boostPin, LOW);
+    Serial.println("Boost off (pwr)\n");
+
+    if(watt < -boostPwr_w)
+      offDelay = 5;   //yield extra second just in case of import less than booster consumption...
+  }
+
   /* control final output */
   bool nextActive = state > 0.0f or watt <= 0.0f;
   if(nextActive == true)
@@ -115,6 +137,18 @@ void Charger::setMaxPower_w(float watt)
   }
   digitalWrite(powerPin, active ? HIGH : LOW);
 
+}
+
+void Charger::emergencyCharge(bool en)
+{
+  /* don't interfere w/ normal operation */
+  if(active)
+    return;
+
+  /* start minimal charging */
+  state = 0.0f;
+  tlc5615(round(state));
+  digitalWrite(powerPin, en);
 }
 
 void Charger::off(void)
@@ -137,6 +171,9 @@ void Charger::setup(void)
 {
   pinMode(powerPin, OUTPUT);
   digitalWrite(powerPin, LOW);
+  pinMode(boostPin, OUTPUT);
+  digitalWrite(boostPin, LOW);
+
   pinMode(nFullyCharged, INPUT_PULLUP);
   _active = 0;
 

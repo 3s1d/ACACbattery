@@ -11,7 +11,7 @@
 #include "auth.h"
 #include "Sun2000softLimiterEmu.h"  //TBR
 
-/* ESP32 DEV KIT */
+/* ESP32 DEV MODUL */
 
 /*
    MQTT
@@ -33,17 +33,20 @@ uint32_t lastPwr_ms = 0;
 uint32_t nextDataSync_ms = 5000; 
 
 /* sun2000 info */
-//note: voltages seems to be read 0.4V too high by my unit (reference is JK bms)
+//note: voltages seems to be read 0.4V'ish too high by my unit (reference is JK bms)
 Background::sun2k_info_t s2kInfo = {};
 const float vbat_min = 60.8f;
-const float vbat_dchgActivate = 62.7f;
+const float vbat_dchgActivate = 62.9f;
+const float vbat_emergencyChg = 60.0f;
+const float vbat_boostChgMax = 69.0f;     //note: top normal charger is 69.2, which is true 68.7V (3.435V per cell)
+bool isEmergencyChg = false;
 
 /* temperature */
 Background::temp_info_t tempInfo;
-#define FAN_PIN   15
-#define HEATER_PIN  22
+#define FAN_PIN                   15
+#define HEATER_PIN                22
 const float fanStart_c = 27.0f;
-const float fanStop_c = 23.0f;
+const float fanStop_c = 23.5f;
 const float heaterStart_c = 6.0f;
 const float heaterStop_c = 10.0f;
 const float shutdown_c = 37.0f;
@@ -197,7 +200,7 @@ void ps_callback(char* topic, byte* payload, unsigned int length)
     }
     else
     {      
-      charger.setMaxPower_w(currentPwr);
+      charger.setMaxPower_w(currentPwr, s2kInfo.vbat_v <= vbat_boostChgMax and s2kInfo.tstamp+10000 > lastPwr_ms);
       if(charger.active == false)
         pwrFlow = 0;
     }
@@ -341,10 +344,23 @@ void loop()
       ps_client.publish( MQTT_SUFFIX "bat_v", String(s2kInfo.vbat_v, 1).c_str());
       ps_client.publish( MQTT_SUFFIX "today_kwh", String(s2kInfo.energyToday_kwh, 1).c_str());
       ps_client.publish( MQTT_SUFFIX "avgPwr_w", String(s2kInfo.avgPwr_w, 1).c_str());
+
+      /* emergency charging */
+      if(isEmergencyChg == false and s2kInfo.vbat_v > vbat_emergencyChg/2.0f and s2kInfo.vbat_v <= vbat_emergencyChg and charger.active == false)
+      {
+        isEmergencyChg = true;
+        charger.emergencyCharge(true);
+      }
+      else if(isEmergencyChg == true and (s2kInfo.vbat_v > vbat_min or discharger.active))
+      {
+        isEmergencyChg = false;
+        charger.emergencyCharge(false);
+      }
     }    
     else
     {
       Serial.println("WRN: sun2k info no tstamp update");
+      isEmergencyChg = false;
     }
 
     /* share max allowed charging power */
@@ -352,8 +368,9 @@ void loop()
 
     /* reply state */
     char json[256];
-    snprintf(json, sizeof(json), "{\"pwr\": %.f, \"chg\": %.f, \"dchg\": %.f, \"dchgAvg\": %.f, \"state\": %d, \"up\": %u, \"fChgInd\": %u}", 
-      currentPwr, charger.getMaxPower_w(), discharger.getMaxPower_w(), discharger.active ? s2kInfo.avgPwr_w : 0.0f, pwrFlow, millis(), !digitalRead(charger.nFullyCharged));
+    snprintf(json, sizeof(json), "{\"pwr\": %.f, \"chg\": %.f, \"dchg\": %.f, \"dchgAvg\": %.f, \"state\": %d, \"up\": %u, \"fChgInd\": %u, \"isEmergencyChg\": %u, \"boostChg\": %u}", 
+      currentPwr, charger.getMaxPower_w(), discharger.getMaxPower_w(), discharger.active ? s2kInfo.avgPwr_w : 0.0f, pwrFlow, millis(), !digitalRead(charger.nFullyCharged), isEmergencyChg, 
+      digitalRead(charger.boostPin));
     ps_client.publish( MQTT_SUFFIX "stat", json);
 
     /* temperature information */
@@ -374,9 +391,9 @@ void loop()
       digitalWrite(FAN_PIN, HIGH);
     else if(tempInfo.temp < fanStop_c)
       digitalWrite(FAN_PIN, LOW);
-    if(tempInfo.temp < heaterStart_c and tempInfo.temp != DEVICE_DISCONNECTED_C and lastPwr_ms < millis()+10000 and currentPwr < -50.0f)
+    if(tempInfo.temp < heaterStart_c and tempInfo.temp != DEVICE_DISCONNECTED_C and ((lastPwr_ms < millis()+10000 and currentPwr < -60.0f) or isEmergencyChg))
       digitalWrite(HEATER_PIN, HIGH);
-    else if(tempInfo.temp > heaterStop_c or tempInfo.temp == DEVICE_DISCONNECTED_C or currentPwr > 0.0f or lastPwr_ms > millis()+10000)
+    else if(tempInfo.temp > heaterStop_c or tempInfo.temp == DEVICE_DISCONNECTED_C or (currentPwr > 0.0f and isEmergencyChg == false) or lastPwr_ms > millis()+10000)
       digitalWrite(HEATER_PIN, LOW);
 
     nextDataSync_ms = millis() + 7500;

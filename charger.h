@@ -1,3 +1,4 @@
+#include "esp32-hal-gpio.h"
 #ifndef __CHARGER_H
 #define __CHARGER_H
 
@@ -13,6 +14,7 @@ public:
   const uint16_t maxDAC = 860;   //vref is fead via voltage halfer (resistor) from charger, effectivly canceling out 2x gain of tlc5615
 
   const uint32_t powerPin = 4;
+  const uint32_t boostPin = 27;
   const uint32_t nFullyCharged = 23;
 
   const float minChrgPwr_w = -66.0f;
@@ -20,7 +22,9 @@ public:
   const float wattPerStep = (maxChrgPwr_w-minChrgPwr_w) / maxDAC;
   const float powerMarginW = 2.0f*minChrgPwr_w;
 
-  const float ki = 0.3f;
+  const float boostPwr_w = -1000.0f;   //tbd
+
+  const float ki = 0.25f;   //0.3f
   const float kp = 0.7f;
 
 private:
@@ -37,11 +41,12 @@ public:
 
   Charger() : active(_active) { }
 
-  float getMaxPower_w(void) { return (active == false) ? 0.0f : (wattPerStep * state + minChrgPwr_w); }
+  float getMaxPower_w(void) { return ((active == false) ? 0.0f : (wattPerStep * state + minChrgPwr_w)) + (!!digitalRead(boostPin) * boostPwr_w); }
 
   void setup(void);
 
-  void setMaxPower_w(float watt);
+  void setMaxPower_w(float watt, bool boostable);
+  void emergencyCharge(bool en);
   void off(void);
 };
 

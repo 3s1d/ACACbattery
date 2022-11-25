@@ -53,7 +53,7 @@ void IRAM_ATTR Sun2000softLimiterEmu::onTimer(void)
     case 2:                                     //deactivate pulse
       digitalWrite(limiterPin, LOW);
       state = 3;
-      timerAlarmWrite(timer, 18000, false);     //somewhere in the back of the wave
+      timerAlarmWrite(timer, 17000, false);     //somewhere in the back of the wave
       break;
    case 3:                                      //done, reactivate irq
    default:

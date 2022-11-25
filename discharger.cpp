@@ -31,7 +31,7 @@ void Discharger::setMaxPower_w(float watt)
   if(nextActive == true)
   {
     _active = nextActive;
-    offDelay = 4;
+    offDelay = 5;
   }
   else if(offDelay > 0)
   {
@@ -44,7 +44,7 @@ void Discharger::setMaxPower_w(float watt)
     _active = nextActive;
   }
   //_active = state > 0.0f or watt >= 0;
-  softLimiterEmu.set(active ? 1000.0f : -1000.0f);
+  softLimiterEmu.set(active ? 150.0f : -150.0f);
 
 #if 0
   Serial.print("is:");

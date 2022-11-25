@@ -9,7 +9,7 @@ public:
   const uint8_t limit = 240;          //approx 1750W    1:2 divider + opamp
   const float wattPerStep = 7.875f;
   const float powerMarginW = 4.0f*wattPerStep;
-  const float ki = 0.5f;
+  const float ki = 0.45f;           //0.5f;
 
 private:
 
