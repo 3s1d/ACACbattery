@@ -17,12 +17,12 @@ public:
   const uint32_t boostPin = 27;
   const uint32_t nFullyCharged = 23;
 
-  const float minChrgPwr_w = -66.0f;
+  const float minChrgPwr_w = -67.0f;
   const float maxChrgPwr_w = -1560.0f;
   const float wattPerStep = (maxChrgPwr_w-minChrgPwr_w) / maxDAC;
   const float powerMarginW = 2.0f*minChrgPwr_w;
 
-  const float boostPwr_w = -1000.0f;   //tbd
+  const float boostPwr_w = -780.0f;
 
   const float ki = 0.25f;   //0.3f
   const float kp = 0.7f;
@@ -41,12 +41,11 @@ public:
 
   Charger() : active(_active) { }
 
-  float getMaxPower_w(void) { return ((active == false) ? 0.0f : (wattPerStep * state + minChrgPwr_w)) + (!!digitalRead(boostPin) * boostPwr_w); }
-
+  float getMaxPower_w(void);
   void setup(void);
 
   void setMaxPower_w(float watt, bool boostable);
-  void emergencyCharge(bool en);
+  void emergencyCharge(bool en, bool heating = false);
   void off(void);
 };
 

@@ -16,6 +16,7 @@ private:
   float state = 0.0f;
   bool _active = false;
   int16_t offDelay = 0;
+  uint32_t halfPwr_till = 0;
 
 public:
   const bool &active;
@@ -26,7 +27,10 @@ public:
 
   void setMaxPower_w(float watt);  
   float getMaxPower_w(void) { return (active == false) ? 0.0f : (wattPerStep * state); }
+  
   void off(void);
+  void halfPwr_60sec(void) { halfPwr_till = millis() + 60000; }
+
 };
 
 extern Discharger discharger;

@@ -22,6 +22,11 @@ void Discharger::setMaxPower_w(float watt)
     nextState = limit;
   else if(nextState < 0.0f)
     nextState = 0.0f;
+  
+  /* halfen power */
+  if(millis() < halfPwr_till and nextState > limit/2)
+    nextState = limit/2;
+  
   dacWrite(dacCh, round(nextState));
   
   state = nextState;

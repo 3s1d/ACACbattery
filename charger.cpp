@@ -139,16 +139,39 @@ void Charger::setMaxPower_w(float watt, bool boostable)
 
 }
 
-void Charger::emergencyCharge(bool en)
+float Charger::getMaxPower_w(void) 
+{ 
+  /* in case of non active, check pin manually in case some emergency stuff is going on */
+  if(active == false)
+  {
+    //note: inverted values for emergency charging 
+    if(digitalRead(powerPin))
+      return -( (wattPerStep * state + minChrgPwr_w) + (!!digitalRead(boostPin) * boostPwr_w) );
+    else
+      return 0;
+  }
+
+  /* active stuff */
+  return (wattPerStep * state + minChrgPwr_w) + (!!digitalRead(boostPin) * boostPwr_w); 
+}
+
+void Charger::emergencyCharge(bool en, bool heating)
 {
   /* don't interfere w/ normal operation */
   if(active)
     return;
 
   /* start minimal charging */
-  state = 0.0f;
+  state = (heating and en) ? (maxDAC/3.0f) : 0.0f;
   tlc5615(round(state));
   digitalWrite(powerPin, en);
+
+  //note: we can not set DAC if no power
+  if(en)
+  {
+    delay(200);             //100ms tested
+    tlc5615(round(state));
+  }
 }
 
 void Charger::off(void)

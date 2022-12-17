@@ -20,6 +20,7 @@
 const char *name = "Battery";
 const char *mqtt_broker = "apollo.local";
 const char *sdmPwr_topic = "/sdmGw/power_quick";
+const char *goePwr_topic = "goe22/nrg";
 
 PubSubClient ps_client;
 WiFiClient espClient;
@@ -30,16 +31,21 @@ int32_t pwrFlow = 0;
 float currentPwr = 0.0f;
 uint32_t lastPwr_ms = 0;
 
+/* wallbox */
+float goePwr = 0.0f;
+uint32_t goe_ms = 0;
+
 uint32_t nextDataSync_ms = 5000; 
 
 /* sun2000 info */
 //note: voltages seems to be read 0.4V'ish too high by my unit (reference is JK bms)
 Background::sun2k_info_t s2kInfo = {};
 const float vbat_min = 60.8f;
-const float vbat_dchgActivate = 62.9f;
+const float vbat_dchgActivate = 63.0f;
 const float vbat_emergencyChg = 60.0f;
 const float vbat_boostChgMax = 69.0f;     //note: top normal charger is 69.2, which is true 68.7V (3.435V per cell)
 bool isEmergencyChg = false;
+bool isEmergencyHeating = false;
 
 /* temperature */
 Background::temp_info_t tempInfo;
@@ -47,10 +53,11 @@ Background::temp_info_t tempInfo;
 #define HEATER_PIN                22
 const float fanStart_c = 27.0f;
 const float fanStop_c = 23.5f;
-const float heaterStart_c = 6.0f;
+const float heaterStart_c = 3.0f;
 const float heaterStop_c = 10.0f;
 const float shutdown_c = 37.0f;
-const float minCharge_c = 4.0f;
+const float minCharge_c = 2.0f;
+const float minBoostTemp_c = fanStop_c - 2.0f;    //note: battery spec tops out at 0.2C for <10deg. However, we are not measuring the bat temp directly...
 
 void WiFiEvent(WiFiEvent_t event)
 {
@@ -109,6 +116,11 @@ bool reconnect()
   Serial.print(sdmPwr_topic);
   Serial.print("] ");
   ps_client.subscribe(sdmPwr_topic);
+  Serial.print("[subscr: ");
+  Serial.print(goePwr_topic);
+  Serial.print("] ");
+  ps_client.subscribe(goePwr_topic);
+
 
   /* debug */
   char msg[128];
@@ -118,14 +130,10 @@ bool reconnect()
   return true;
 }
 
-void ps_callback(char* topic, byte* payload, unsigned int length)
+void sdm_callback(char* topic, byte* payload, unsigned int length)
 {
-//  Serial.print("Rx Msg [");
-//  Serial.print(topic);
-//  Serial.print("] ");
-//  for (int i = 0; i < length; i++)
-//    Serial.print((char)payload[i]);
-//  Serial.println();
+  if(payload == nullptr or length == 0)
+    return;
 
   DynamicJsonDocument doc(256);
   DeserializationError error = deserializeJson(doc, payload);
@@ -200,7 +208,8 @@ void ps_callback(char* topic, byte* payload, unsigned int length)
     }
     else
     {      
-      charger.setMaxPower_w(currentPwr, s2kInfo.vbat_v <= vbat_boostChgMax and s2kInfo.tstamp+10000 > lastPwr_ms);
+      charger.setMaxPower_w(currentPwr, 
+        s2kInfo.vbat_v <= vbat_boostChgMax and s2kInfo.tstamp+10000 > lastPwr_ms and tempInfo.temp > minBoostTemp_c and digitalRead(charger.nFullyCharged) == HIGH);
       if(charger.active == false)
         pwrFlow = 0;
     }
@@ -219,6 +228,12 @@ void ps_callback(char* topic, byte* payload, unsigned int length)
       Serial.print("Battery too low\n");
       pwrFlow = 0;
     }
+    else if(isEmergencyHeating)
+    {
+      //prevent from discharging
+      Serial.print("Emergency heating\n");
+      pwrFlow = 0;
+    }
     else
     {
       discharger.setMaxPower_w(currentPwr);
@@ -227,6 +242,54 @@ void ps_callback(char* topic, byte* payload, unsigned int length)
     }
   }
 }
+
+void goe_callback(char* topic, byte* payload, unsigned int length)
+{
+  if(payload == nullptr or length == 0)
+    return;
+
+  /* scan for total energy consumption */
+  char* rest;
+  char* value = strtok_r((char *) payload, ",", &rest);
+  uint16_t idx = 0;
+  while (value != nullptr)
+  {
+    if(idx == 11)
+    {
+      goePwr = atof(value);
+      goe_ms = millis();
+
+      if(goePwr > 1000.0f)
+        discharger.halfPwr_60sec();
+      break;
+    }
+
+    idx++;
+    value = strtok_r(nullptr, ",", &rest);
+  }
+
+}
+
+void ps_callback(char* topic, byte* payload, unsigned int length)
+{
+//  Serial.print("Rx Msg [");
+//  Serial.print(topic);
+//  Serial.print("] ");
+//  for (int i = 0; i < length; i++)
+//    Serial.print((char)payload[i]);
+//  Serial.println();
+
+  if(strcmp(topic, sdmPwr_topic) == 0)
+    sdm_callback(topic, payload, length);
+  else if(strcmp(topic, goePwr_topic) == 0)
+    goe_callback(topic, payload, length);
+  else
+  {
+   Serial.print("Unknown topic: ");
+   Serial.println(topic);
+  }
+}
+
 
 void setup()
 {
@@ -368,9 +431,9 @@ void loop()
 
     /* reply state */
     char json[256];
-    snprintf(json, sizeof(json), "{\"pwr\": %.f, \"chg\": %.f, \"dchg\": %.f, \"dchgAvg\": %.f, \"state\": %d, \"up\": %u, \"fChgInd\": %u, \"isEmergencyChg\": %u, \"boostChg\": %u}", 
-      currentPwr, charger.getMaxPower_w(), discharger.getMaxPower_w(), discharger.active ? s2kInfo.avgPwr_w : 0.0f, pwrFlow, millis(), !digitalRead(charger.nFullyCharged), isEmergencyChg, 
-      digitalRead(charger.boostPin));
+    snprintf(json, sizeof(json), "{\"pwr\": %.f, \"chg\": %.f, \"dchg\": %.f, \"dchgAvg\": %.f, \"state\": %d, \"up\": %u, \"fChgInd\": %u, \"isEmergencyChg\": %u, \"isEmergencyHeating\": %u, \"boostChg\": %u, \"goe\": %.1f}", 
+      currentPwr, charger.getMaxPower_w(), discharger.getMaxPower_w(), discharger.active ? s2kInfo.avgPwr_w : 0.0f, pwrFlow, millis(), !digitalRead(charger.nFullyCharged), isEmergencyChg, isEmergencyHeating, 
+      digitalRead(charger.boostPin), goePwr);
     ps_client.publish( MQTT_SUFFIX "stat", json);
 
     /* temperature information */
@@ -384,6 +447,19 @@ void loop()
       Serial.println("C");    
       ps_client.publish( MQTT_SUFFIX "temp_c", String(tempInfo.temp, 1).c_str());
       ps_client.publish( MQTT_SUFFIX "fan", digitalRead(FAN_PIN) ? "on" : "off");
+
+      /* emergency heating */
+      if(isEmergencyHeating == false and tempInfo.temp < heaterStart_c and tempInfo.temp != DEVICE_DISCONNECTED_C and charger.active == false and discharger.active == false)
+      {
+        isEmergencyHeating = true;
+        charger.emergencyCharge(true, true);
+      }
+      else if(isEmergencyHeating == true and (tempInfo.temp > heaterStop_c or discharger.active or charger.active))
+      {
+        isEmergencyHeating = false;
+        charger.emergencyCharge(false);
+      }
+
     }
 
     /* temperture control */
@@ -416,4 +492,8 @@ void loop()
 
   ArduinoOTA.handle();
   delay(10);
+
+  /* avoid any timestamp roll over issues */
+  if(millis() > INT32_MAX and charger.active == false and discharger.active == false and isEmergencyChg == false and isEmergencyHeating == false)
+    ESP.restart();
 }
