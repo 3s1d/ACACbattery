@@ -186,14 +186,23 @@ void sdm_callback(char* topic, byte* payload, unsigned int length)
     return;
   }
 
+  /* slow down switching in case of car charging */
+  const int32_t disChFactor = (goePwr > 1000.0f and millis() < goe_ms+20000) ? 10 : 1;
+
   /* start up decice */
   if(charger.active == false and discharger.active == false)
   {
-    if(currentPwr > 0.0f and pwrFlow < pwrFlowDelay)
+    if(currentPwr > 0.0f and pwrFlow < pwrFlowDelay * disChFactor)
       pwrFlow++;
     else if(currentPwr < 0.0f and pwrFlow > -pwrFlowDelay)
       pwrFlow--;
   }
+
+  /* ensure delay borders */
+  if(pwrFlow > pwrFlowDelay * disChFactor)
+    pwrFlow = pwrFlowDelay * disChFactor;
+  else if(pwrFlow < -pwrFlowDelay)
+    pwrFlow = -pwrFlowDelay;
 
   /* prevent inverter powering charger and vise versa */
   //note: in case of active device, deactivate first and try ned round
@@ -214,7 +223,7 @@ void sdm_callback(char* topic, byte* payload, unsigned int length)
         pwrFlow = 0;
     }
   }
-  else if(discharger.active or pwrFlow >= pwrFlowDelay)
+  else if(discharger.active or pwrFlow >= pwrFlowDelay * disChFactor)
   {
     /* ensure not to under voltage the battery */
     if(s2kInfo.vbat_v < vbat_min or s2kInfo.tstamp+10000 < lastPwr_ms)
